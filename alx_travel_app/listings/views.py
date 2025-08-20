@@ -53,13 +53,20 @@ class BookingViewSet(viewsets.ModelViewSet):
         serializer = BookingSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        
-        total_price = serializer.get_total_price(serializer.instance)
-        listing = Listing.objects.get(id=serializer.instance.listing.id)
-        booking = serializer.save(listing=listing, total_price=total_price)
-        booking.listing = listing
-        booking.save()
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+        validated = serializer.validated_data
+        listing = validated.get("listing")
+        check_in = validated.get("check_in")
+        check_out = validated.get("check_out")
+
+        num_nights = (check_out - check_in).days if (check_in and check_out) else 0
+        if num_nights < 0:
+            num_nights = 0
+        total_price = listing.price * num_nights if listing else 0
+
+        booking = serializer.save(total_price=total_price)
+        # Return the created booking data
+        return Response(BookingSerializer(booking).data, status=status.HTTP_201_CREATED)
 
 
 
@@ -127,7 +134,7 @@ class InitiatePaymentView(APIView):
 
         if response.status_code == status.HTTP_200_OK:
             payment_url = response.json().get("data", {}).get("checkout_url")
-            return Response({"payment_url": payment_url}, status=status.HTTP_200_OK)
+            return Response({"payment_url": payment_url, "tx_ref": tx_ref}, status=status.HTTP_200_OK)
         else:
             return Response(
                 {"error": response.json()}, status=status.HTTP_400_BAD_REQUEST

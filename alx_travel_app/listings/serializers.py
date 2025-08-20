@@ -52,16 +52,11 @@ class BookingSerializer(serializers.ModelSerializer):
     """
     Serializer for the booking
     """
-    def get_total_price(self, obj):
-        """
-        Get the total price for the booking
-        """
-        # logger.info(f"Total price: {obj.listing.price * (obj.check_out - obj.check_in).days}")
-        return obj.listing.price * (obj.check_out - obj.check_in).days
+    total_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     
     class Meta:
         model = Booking
-        fields = ['id', 'listing', 'user', 'check_in', 'check_out', 'status']
+        fields = ['id', 'listing', 'user', 'check_in', 'check_out', 'status', 'total_price']
 
 class ListingDetailSerializer(serializers.ModelSerializer):
     """
