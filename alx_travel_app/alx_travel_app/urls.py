@@ -17,11 +17,16 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
+from listings.views import InitiatePaymentView, VerifyPaymentView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('listings.urls')),
 
+    path('api/pay/initiate-payment/', InitiatePaymentView.as_view(), name='initiate-payment'),
+    path('api/pay/verify-payment/', VerifyPaymentView.as_view(), name='verify-payment'),
+    # path('api/', include('bookings.urls')),
+    # path('api/', include('payments.urls')),
     #Api Documentation for swagger
     path('api/schema', SpectacularAPIView.as_view(), name='schema'),
     path('api/schema/swagger-ui/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui')

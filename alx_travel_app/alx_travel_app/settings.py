@@ -37,7 +37,7 @@ DEBUG = env.bool('DEBUG', default=True)
 ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['localhost', '127.0.0.1'])
 
 AUTH_BOOKINGS_MODEL = "bookings.Booking"
-AUTH_LISTING_MODEL= 'listings.Listing'
+AUTH_LISTING_MODEL='listings.Listing'
 AUTH_USER_MODEL= 'users.User'
 
 # Application definition
@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     # 'listings.app.ListingsConfig',
     # 'bookings.app.BookingsConfig',
+    # 'payments.app.PaymentsConfig',
 
 
     'alx_travel_app',
@@ -61,7 +62,8 @@ INSTALLED_APPS = [
     'reviews',
     'users',
     'bookings',
-    'addresses'
+    'addresses',
+    'payments',
 ]
 
 MIDDLEWARE = [
@@ -166,11 +168,16 @@ EMAIL_PORT = env.int('EMAIL_PORT', default=587)
 EMAIL_USE_TLS = env.bool('EMAIL_USE_TLS', default=True)
 EMAIL_HOST_USER = env('EMAIL_HOST_USER', default='')
 EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD', default='')
+DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='')
 
 # API Keys
 GOOGLE_MAPS_API_KEY = env('GOOGLE_MAPS_API_KEY', default='')
 STRIPE_SECRET_KEY = env('STRIPE_SECRET_KEY', default='')
 STRIPE_PUBLISHABLE_KEY = env('STRIPE_PUBLISHABLE_KEY', default='')
+
+# Chapa Endpoints
+CHAPA_TIMEOUT = env.int('CHAPA_TIMEOUT', default=30)
+CHAPA_BASE_URL='https://api.chapa.co/v1/'
 
 # Redis Configuration
 REDIS_URL = env('REDIS_URL', default='redis://localhost:6379/0')

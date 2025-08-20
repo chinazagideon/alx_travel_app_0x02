@@ -1,17 +1,33 @@
+import requests
+import os
+from dotenv import load_dotenv
+import uuid
+
+load_dotenv()
+
+CHAPA_TEST_SECRET_KEY = os.getenv("CHAPA_TEST_SECRET_KEY")
+
 from django.shortcuts import render
 from rest_framework import viewsets, permissions, filters, status
 from bookings.models import Booking
-from .models import Listing
+from .models import Listing, Payment, PaymentStatus
 from django.conf import settings
-from rest_framework.response import Response 
+from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 from django.http import HttpResponse
 import logging
-
+from .serializers import PaymentSerializer, ListingSerializer
+from bookings.serializers import BookingSerializer
+from rest_framework.views import APIView
+from django.urls import reverse
 from .serializers import (
     ListingSerializer,
     BookingSerializer,
+    PaymentSerializer,
+    PaymentInitiateSerializer,
 )
+from .tasks import send_booking_email_notification
+
 
 class ListingViewSet(viewsets.ModelViewSet):
     """
@@ -21,6 +37,7 @@ class ListingViewSet(viewsets.ModelViewSet):
     queryset = Listing.objects.all()
     serializer_class = ListingSerializer
 
+
 class BookingViewSet(viewsets.ModelViewSet):
     """
     API endpoints for managing Bookings
@@ -28,6 +45,171 @@ class BookingViewSet(viewsets.ModelViewSet):
 
     queryset = Booking.objects.all()
     serializer_class = BookingSerializer
-    
+
+    def create(self, request, *args, **kwargs):
+        """
+        Create a booking
+        """
+        serializer = BookingSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        total_price = serializer.get_total_price(serializer.instance)
+        listing = Listing.objects.get(id=serializer.instance.listing.id)
+        booking = serializer.save(listing=listing, total_price=total_price)
+        booking.listing = listing
+        booking.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
+
+class PaymentViewSet(viewsets.ModelViewSet):
+    """
+    API endpoints for managing Payments
+    """
+
+    queryset = Payment.objects.all()
+    serializer_class = PaymentSerializer
+
+
+class InitiatePaymentView(APIView):
+    """
+    API endpoint for initiating a payment
+    """
+
+    def post(self, request, *args, **kwargs):
+        """
+        Initiate a payment
+        """
+
+        serializer = PaymentInitiateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        # else:
+
+            # return Response(serializer.data, status=status.HTTP_200_OK)
+        
+        # get request data
+        url = "https://api.chapa.co/v1/transaction/initialize"
+
+        headers = {
+            "Authorization": f"Bearer {CHAPA_TEST_SECRET_KEY}",
+            "Content-Type": "application/json",
+        }
+
+        tx_ref = str(uuid.uuid4())
+        callback_url = 'https://127.0.0.1:8000/api/pay/verify-payment/'
+
+        booking = Booking.objects.get(id=request.data.get("booking_id"))
+
+        data = {
+            "amount": request.data.get("amount"),
+            "currency": "ETB",
+            "booking_id": booking.id,
+            "email": request.data.get("email"),
+            "first_name": request.data.get("first_name"),
+            "last_name": request.data.get("last_name"),
+            "phone": request.data.get("phone"),
+            "tx_ref": tx_ref,
+            "callback_url": callback_url,
+            "return_url": callback_url,
+        }
+        try:
+            response = requests.post(
+                url, headers=headers, json=data, timeout=settings.CHAPA_TIMEOUT
+            )
+        except requests.exceptions.Timeout:
+            return Response(
+                {"error": "Request timed out"}, status=status.HTTP_504_GATEWAY_TIMEOUT
+            )
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        if response.status_code == status.HTTP_200_OK:
+            payment_url = response.json().get("data", {}).get("checkout_url")
+            return Response({"payment_url": payment_url}, status=status.HTTP_200_OK)
+        else:
+            return Response(
+                {"error": response.json()}, status=status.HTTP_400_BAD_REQUEST
+            )
+
+
+class VerifyPaymentView(APIView):
+    """
+    API endpoint for verifying a payment
+    """
+
+    def get(self, request, *args, **kwargs):
+        """
+        Verify a payment
+        """
+        # get transaction id from query params
+        tx_ref = request.query_params.get("tx_ref")
+
+        if not tx_ref:
+            return Response(
+                {"error": "Transaction reference is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # make request to chapa to verify payment
+        url = f"https://api.chapa.co/v1/transaction/verify/{tx_ref}"
+        headers = {
+            "Authorization": f"Bearer {CHAPA_TEST_SECRET_KEY}",
+            "Content-Type": "application/json",
+        }
+
+        try:
+            response = requests.get(
+                url, headers=headers, timeout=settings.CHAPA_TIMEOUT
+            )
+        except requests.exceptions.Timeout:
+            return Response(
+                {"error": "Request timed out"}, status=status.HTTP_504_GATEWAY_TIMEOUT
+            )
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        if response.status_code == status.HTTP_200_OK:
+            chapa_response = response.json()
+            if chapa_response.get("status") == "success":
+                # find payment modal instance
+                payment = Payment.objects.filter(transaction_id=tx_ref).first()
+                try:
+                    if payment:
+                        send_booking_email_notification.delay(
+                            payment.booking.reference, payment.booking.email
+                        )
+                        payment.status = PaymentStatus.SUCCESSFUL
+                        payment.save()
+                        return Response(
+                            {"message": "Payment verified successfully"},
+                            status=status.HTTP_200_OK,
+                        )
+                    else:
+                        return Response(
+                            {"error": "Payment not found"},
+                            status=status.HTTP_404_NOT_FOUND,
+                        )
+                except Payment.DoesNotExist:
+                    return Response(
+                        {"error": "Payment not found"}, status=status.HTTP_404_NOT_FOUND
+                    )
+            else:
+                try:
+                    payment = Payment.objects.filter(transaction_id=tx_ref)
+                    if payment:
+                        payment.status = PaymentStatus.FAILED
+                        payment.save()
+                        return Response(
+                            {"error": "Payment failed"},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+                except Payment.DoesNotExist:
+                    return Response(
+                        {"error": "Payment not found"}, status=status.HTTP_404_NOT_FOUND
+                    )
+        else:
+            return Response(
+                {"error": response.json()}, status=status.HTTP_400_BAD_REQUEST
+            )

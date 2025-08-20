@@ -3,7 +3,7 @@
 Models for the bookings app
 """
 from django.db import models
-from listings.models import Listing
+from django.conf import settings
 from users.models import User
 
 class BookingStatus(models.TextChoices):
@@ -24,7 +24,10 @@ class Booking(models.Model):
     """
     Booking model
     """
-    listing = models.ForeignKey(Listing, on_delete=models.CASCADE)
+
+    
+
+    listing = models.ForeignKey(settings.AUTH_LISTING_MODEL, on_delete=models.CASCADE)
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     check_in = models.DateField()
     check_out = models.DateField()
